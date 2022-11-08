@@ -1,3 +1,4 @@
+import sys
 import time
 import cv2
 import pytesseract
@@ -7,6 +8,7 @@ import math
 
 NGRAM_NMIN = 2
 NGRAM_NMAX = 6
+REQ_SWITCH = 2
 CLEANUP_REGEX = re.compile("[^a-z ]")
 
 pages = [
@@ -46,11 +48,18 @@ def cleanup(s):
 def similarity(ngrams1, ngrams2):
     s = 0
     
+    total1 = sum([ count for (_, count) in ngrams1.items() ])
+    total2 = sum([ count for (_, count) in ngrams2.items() ])
+    
     for (ngram, count) in ngrams1.items():
         if ngram in ngrams2:
-            s += count * ngrams2[ngram]
+            s += count * ngrams2[ngram] / total1
         else:
-            s -= count
+            s -= count / total1
+    
+    for (ngram, count) in ngrams2.items():
+        if ngram not in ngrams1:
+            s -= count / total2
     
     return s
 
@@ -102,9 +111,23 @@ def makePerspectiveTransform(c):
     M = cv2.getPerspectiveTransform(np.asarray(c, dtype=np.float32), points2)
     return (M, width, height)
 
+def subframes(width, height, img):
+    (w, h) = (width // 2, height // 2)
+    
+    return [
+        img[0:h, 0:w],
+        img[h:h+h, 0:w],
+        img[0:h, w:w+w],
+        img[h:h+h, w:w+w],
+    ]
+
 def main():
     cv2.namedWindow("Preview")
-    vc = cv2.VideoCapture(1)
+    
+    if len(sys.argv) > 1:
+        vc = cv2.VideoCapture(int(sys.argv[1]))
+    else:
+        vc = cv2.VideoCapture(0)
     
     if vc.isOpened():
         rval, frame = vc.read()
@@ -118,15 +141,50 @@ def main():
     print("calibrated")
     (M, width, height) = makePerspectiveTransform(corners)
     
+    current_page = None
+    new_page = None
+    new_page_num = 0
+    
     while rval:
         rval, frame = vc.read()
         corrected = cv2.warpPerspective(frame, M, (width, height))
-        cv2.imshow("Preview", corrected)
-        text = pytesseract.image_to_string(corrected)
+        subs = subframes(width, height, corrected)
+        
+        text = ""
+        for (i, sub) in enumerate(subs):
+            text += pytesseract.image_to_string(subs[i], config="--psm 4", lang="eng")
+        
         print(cleanup(text))
-        page, _ = match(text)
+        
+        page, val = match(text)
         print("page", page + 1)
         print()
+        
+        if page != current_page:
+            if new_page_num >= REQ_SWITCH or current_page == None:
+                current_page = page
+                new_page_num = 0
+                new_page = None
+            elif new_page == page:
+                new_page_num += val
+                if new_page_num >= REQ_SWITCH:
+                    current_page = page
+                    new_page_num = 0
+                    new_page = None
+            else:
+                new_page = page
+                new_page_num = val
+                
+            cv2.putText(corrected, f"page {current_page + 1} (to {page + 1}; {round(new_page_num, 2)} / {REQ_SWITCH})",
+                (50, 130), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 0), 5, cv2.LINE_AA)
+        else:
+            cv2.putText(corrected, f"page {current_page + 1}, stable",
+                (50, 130), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 0), 5, cv2.LINE_AA)
+            
+            new_page = None
+            new_page_num = 0
+        
+        cv2.imshow("Preview", corrected)
         cv2.waitKey(1)
     
     vc.release()
