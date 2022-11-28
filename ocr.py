@@ -5,11 +5,16 @@ import pytesseract
 import re
 import numpy as np
 import math
+import pickle
+
+from pythonosc import udp_client
 
 NGRAM_NMIN = 2
 NGRAM_NMAX = 6
 REQ_SWITCH = 2
 CLEANUP_REGEX = re.compile("[^a-z ]")
+OSC_IP = "127.0.0.1"
+OSC_PORT = 9001
 
 pages = [
     "did you ever go to silversands on a sunny summers day then perhaps you saw the mermaid who sand in the deep blue bay she sang to the fish in the ocean to the haddock the hake and the ling and they flashed their scales and swished their tails to hear the mermaid sing",
@@ -53,9 +58,7 @@ def similarity(ngrams1, ngrams2):
     
     for (ngram, count) in ngrams1.items():
         if ngram in ngrams2:
-            s += count * ngrams2[ngram] / total1
-        else:
-            s -= count / total1
+            s += count / total1
     
     for (ngram, count) in ngrams2.items():
         if ngram not in ngrams1:
@@ -63,11 +66,20 @@ def similarity(ngrams1, ngrams2):
     
     return s
 
+def sim(str1, str2):
+    return similarity(find_ngrams(str1), find_ngrams(str2))
+
 def match(text):
     clean = cleanup(text)
     test_ngrams = find_ngrams(clean)
     sims = enumerate([ similarity(test_ngrams, page_ngrams) for page_ngrams in ngrams ])
-    return max(sims, key = lambda p: p[1])
+    m = max(sims, key = lambda p: p[1])
+    
+    # a hack to get page 8 working properly
+    if m[1] < 0.5 and ("winter" in clean or "spring" in clean or "autumn" in clean):
+        return (7, 1.0)
+        
+    return m
 
 ngrams = [ find_ngrams(page) for page in pages ]
 
@@ -124,6 +136,8 @@ def subframes(width, height, img):
 def main():
     cv2.namedWindow("Preview")
     
+    client = udp_client.SimpleUDPClient(OSC_IP, OSC_PORT)
+    
     if len(sys.argv) > 1:
         vc = cv2.VideoCapture(int(sys.argv[1]))
     else:
@@ -131,14 +145,30 @@ def main():
     
     if vc.isOpened():
         rval, frame = vc.read()
+        time.sleep(1)
         rval, frame = vc.read()
         time.sleep(1)
     else:
         print("Could not open webcam stream")
         return
     
-    corners = calibrate(vc)
-    print("calibrated")
+    if len(sys.argv) > 2:
+        if sys.argv[2] == 'calibrate':
+            corners = calibrate(vc)
+            with open('calibration.pkl', 'wb') as file:
+                pickle.dump(corners, file)
+                print("calibrated", corners)
+    else:
+        try:
+            with open('calibration.pkl', 'rb') as file:
+                corners = pickle.load(file)
+                print("loaded calibration:", corners)
+        except FileNotFoundError:
+            corners = calibrate(vc)
+            with open('calibration.pkl', 'wb') as file:
+                pickle.dump(corners, file)
+                print("calibrated", corners)
+                        
     (M, width, height) = makePerspectiveTransform(corners)
     
     current_page = None
@@ -154,32 +184,33 @@ def main():
         for (i, sub) in enumerate(subs):
             text += pytesseract.image_to_string(subs[i], config="--psm 4", lang="eng")
         
-        print(cleanup(text))
+        text = cleanup(text)
         
         page, val = match(text)
-        print("page", page + 1)
-        print()
+        print(text)
         
         if page != current_page:
             if new_page_num >= REQ_SWITCH or current_page == None:
                 current_page = page
                 new_page_num = 0
                 new_page = None
+                switch_page(client, page)
             elif new_page == page:
                 new_page_num += val
                 if new_page_num >= REQ_SWITCH:
                     current_page = page
                     new_page_num = 0
                     new_page = None
+                    switch_page(client, page)
             else:
                 new_page = page
                 new_page_num = val
                 
             cv2.putText(corrected, f"page {current_page + 1} (to {page + 1}; {round(new_page_num, 2)} / {REQ_SWITCH})",
-                (50, 130), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 0), 5, cv2.LINE_AA)
+                (50, 130), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 3, cv2.LINE_AA)
         else:
             cv2.putText(corrected, f"page {current_page + 1}, stable",
-                (50, 130), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 0), 5, cv2.LINE_AA)
+                (50, 130), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 3, cv2.LINE_AA)
             
             new_page = None
             new_page_num = 0
@@ -189,6 +220,10 @@ def main():
     
     vc.release()
     cv2.destroyWindow("Preview")
+
+def switch_page(client, page):
+    print("switched to page:", page + 1)
+    client.send_message("/page", page + 1)
 
 if __name__ == "__main__":
     main()
