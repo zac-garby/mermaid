@@ -11,7 +11,7 @@ from pythonosc import udp_client
 
 NGRAM_NMIN = 2
 NGRAM_NMAX = 6
-REQ_SWITCH = 2
+REQ_SWITCH = 1.2
 CLEANUP_REGEX = re.compile("[^a-z ]")
 OSC_IP = "127.0.0.1"
 OSC_PORT = 9001
