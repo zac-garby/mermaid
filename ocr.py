@@ -6,6 +6,7 @@ import re
 import numpy as np
 import math
 import pickle
+import requests
 
 from pythonosc import udp_client
 
@@ -15,6 +16,8 @@ REQ_SWITCH = 1.2
 CLEANUP_REGEX = re.compile("[^a-z ]")
 OSC_IP = "127.0.0.1"
 OSC_PORT = 9001
+OSC_LIGHT_IP = "169.254.5.64"
+OSC_LIGHT_PORT = 8005
 
 pages = [
     "did you ever go to silversands on a sunny summers day then perhaps you saw the mermaid who sand in the deep blue bay she sang to the fish in the ocean to the haddock the hake and the ling and they flashed their scales and swished their tails to hear the mermaid sing",
@@ -33,6 +36,8 @@ pages = [
     "and the creatures on the seashore and the fish beneath the foam jumped and splashed and danced with joy to have their mermaid home and she sang to the cockles and mussels she sang to the birds on the wing and the seashells clapped and the seagulls flapped to hear the mermaid sing",
     "and if you go down to silversands and swim in the bay of blue perhaps youll see the mermaid and perhaps shell sing for you",
 ]
+
+page_hists = []
 
 def find_ngrams(s):
     ngrams = {}
@@ -111,10 +116,39 @@ def calibrate(vc):
     cv2.imshow("Calibrate", frame)
     print("got corners")
     
-    
     cv2.destroyWindow("Calibrate")
     
     return corners
+
+"""
+def calibrate_page_colours(vc, correction, p_width, p_height):
+    global page_hists
+    
+    cv2.namedWindow("Calibrate")
+    page_hists = []
+    rval, frame = vc.read()
+    
+    def handleClick(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            rval, frame = vc.read()
+            corrected = cv2.warpPerspective(frame, correction, (p_width, p_height))
+            hist = get_hist(corrected)
+            page_hists.append(hist)
+    
+    cv2.setMouseCallback("Calibrate", handleClick)
+    
+    while rval and len(page_hists) < len(pages):
+        rval, frame = vc.read()
+        corrected = cv2.warpPerspective(frame, correction, (p_width, p_height))
+        cv2.putText(corrected, f"calibration: left click when on page {len(page_hists) + 1}",
+            (50, 130), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2, cv2.LINE_AA)
+        cv2.imshow("Calibrate", corrected)
+        cv2.waitKey(1)
+    
+    cv2.destroyWindow("Calibrate")
+    
+    return page_hists
+"""
 
 def makePerspectiveTransform(c):
     height = int(math.sqrt((c[2][0] - c[1][0]) * (c[2][0] - c[1][0]) + (c[2][1] - c[1][1]) * (c[2][1] - c[1][1])))
@@ -134,9 +168,11 @@ def subframes(width, height, img):
     ]
 
 def main():
+    global page_hists
     cv2.namedWindow("Preview")
-    
+        
     client = udp_client.SimpleUDPClient(OSC_IP, OSC_PORT)
+    light_client = udp_client.SimpleUDPClient(OSC_LIGHT_IP, OSC_LIGHT_PORT)
     
     if len(sys.argv) > 1:
         vc = cv2.VideoCapture(int(sys.argv[1]))
@@ -155,6 +191,7 @@ def main():
     if len(sys.argv) > 2:
         if sys.argv[2] == 'calibrate':
             corners = calibrate(vc)
+            
             with open('calibration.pkl', 'wb') as file:
                 pickle.dump(corners, file)
                 print("calibrated", corners)
@@ -182,7 +219,7 @@ def main():
         
         text = ""
         for (i, sub) in enumerate(subs):
-            text += pytesseract.image_to_string(subs[i], config="--psm 4", lang="eng")
+            text += pytesseract.image_to_string(subs[i], lang="eng")
         
         text = cleanup(text)
         
@@ -194,14 +231,14 @@ def main():
                 current_page = page
                 new_page_num = 0
                 new_page = None
-                switch_page(client, page)
+                switch_page(client, light_client, page)
             elif new_page == page:
                 new_page_num += val
                 if new_page_num >= REQ_SWITCH:
                     current_page = page
                     new_page_num = 0
                     new_page = None
-                    switch_page(client, page)
+                    switch_page(client, light_client, page)
             else:
                 new_page = page
                 new_page_num = val
@@ -221,9 +258,13 @@ def main():
     vc.release()
     cv2.destroyWindow("Preview")
 
-def switch_page(client, page):
+def idle_light():
+    light_client.send_message("/cs/playback/gotocue", 1)
+    
+def switch_page(client, light_client, page):
     print("switched to page:", page + 1)
     client.send_message("/page", page + 1)
+    light_client.send_message("/cs/playback/gotocue", page + 1)
 
 if __name__ == "__main__":
     main()
