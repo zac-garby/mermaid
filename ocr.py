@@ -7,6 +7,9 @@ import numpy as np
 import math
 import pickle
 import requests
+import asyncio
+import websockets
+import threading
 
 from pythonosc import udp_client
 
@@ -38,6 +41,8 @@ pages = [
 ]
 
 page_hists = []
+client = None
+light_client = None
 
 def find_ngrams(s):
     ngrams = {}
@@ -167,12 +172,13 @@ def subframes(width, height, img):
         img[h:h+h, w:w+w],
     ]
 
-def main():
-    global page_hists
+async def main():
+    global page_hists, client, light_client
     cv2.namedWindow("Preview")
         
     client = udp_client.SimpleUDPClient(OSC_IP, OSC_PORT)
     light_client = udp_client.SimpleUDPClient(OSC_LIGHT_IP, OSC_LIGHT_PORT)
+    print(f"connected to OSC {OSC_IP}:{OSC_PORT} and {OSC_LIGHT_IP}:{OSC_LIGHT_PORT}")
     
     if len(sys.argv) > 1:
         vc = cv2.VideoCapture(int(sys.argv[1]))
@@ -266,5 +272,26 @@ def switch_page(client, light_client, page):
     client.send_message("/page", page + 1)
     light_client.send_message("/cs/playback/gotocue", page + 1)
 
+async def handler(ws):
+    print("got ws connection")
+    async for msg in ws:
+        print("received message", msg)
+        try:
+            page_no = int(msg)
+            switch_page(client, light_client, page_no - 1)
+        except e:
+            print("invalid message")
+
+async def start_websockets():
+    print("started ws server on port :8765")
+    async with websockets.serve(handler, "localhost", 8765):
+        await asyncio.Future()
+
+def main_ws():
+    asyncio.run(start_websockets())
+
 if __name__ == "__main__":
-    main()
+    th = threading.Thread(target=main_ws)
+    th.start()
+    asyncio.run(main())
+    th.join()
