@@ -125,36 +125,6 @@ def calibrate(vc):
     
     return corners
 
-"""
-def calibrate_page_colours(vc, correction, p_width, p_height):
-    global page_hists
-    
-    cv2.namedWindow("Calibrate")
-    page_hists = []
-    rval, frame = vc.read()
-    
-    def handleClick(event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            rval, frame = vc.read()
-            corrected = cv2.warpPerspective(frame, correction, (p_width, p_height))
-            hist = get_hist(corrected)
-            page_hists.append(hist)
-    
-    cv2.setMouseCallback("Calibrate", handleClick)
-    
-    while rval and len(page_hists) < len(pages):
-        rval, frame = vc.read()
-        corrected = cv2.warpPerspective(frame, correction, (p_width, p_height))
-        cv2.putText(corrected, f"calibration: left click when on page {len(page_hists) + 1}",
-            (50, 130), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2, cv2.LINE_AA)
-        cv2.imshow("Calibrate", corrected)
-        cv2.waitKey(1)
-    
-    cv2.destroyWindow("Calibrate")
-    
-    return page_hists
-"""
-
 def makePerspectiveTransform(c):
     height = int(math.sqrt((c[2][0] - c[1][0]) * (c[2][0] - c[1][0]) + (c[2][1] - c[1][1]) * (c[2][1] - c[1][1])))
     width = height * 2
